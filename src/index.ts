@@ -1,18 +1,20 @@
 import { v4 as uuidv4 } from "uuid";
-import { Server, StableBTreeMap, Principal } from "azle";
+import { Server, StableBTreeMap, Principal, None } from "azle";
 import express from "express";
 
 // Define the Volunteer class to represent volunteers
 class Volunteer {
   id: string;
   name: string;
+  email: string;
   contact: string;
   skills: string[];
   createdAt: Date;
 
-  constructor(name: string, contact: string, skills: string[]) {
+  constructor(name: string, email: string, contact: string, skills: string[]) {
     this.id = uuidv4();
     this.name = name;
+    this.email = email;
     this.contact = contact;
     this.skills = skills;
     this.createdAt = new Date();
@@ -94,6 +96,7 @@ export default Server(() => {
     if (
       !req.body.name ||
       typeof req.body.name !== "string" ||
+      !req.body.email ||
       !req.body.contact ||
       typeof req.body.contact !== "string" ||
       !req.body.skills ||
@@ -101,7 +104,30 @@ export default Server(() => {
     ) {
       res.status(400).json({
         error:
-          "Invalid input: Ensure 'name', 'contact', and 'skills' are provided and are of the correct types.",
+          "Invalid input: Ensure 'name', 'contact', 'email', and 'skills' are provided and are of the correct types.",
+      });
+      return;
+    }
+
+    // Validate the email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(req.body.email)) {
+      res.status(400).json({
+        Status: 400,
+        error: "Invalid input: Ensure 'email' is a valid email address.",
+      });
+      return;
+    }
+
+    // Make sure the email is unique for each volunteer
+    const existingVolunteers = volunteersStorage.values();
+    const existingVolunteer = existingVolunteers.find(
+      (volunteer) => volunteer.email === req.body.email
+    );
+    if (existingVolunteer) {
+      res.status(400).json({
+        Status: 400,
+        error: "Invalid input: Volunteer with the same email already exists.",
       });
       return;
     }
@@ -109,6 +135,7 @@ export default Server(() => {
     try {
       const volunteer = new Volunteer(
         req.body.name,
+        req.body.email,
         req.body.contact,
         req.body.skills
       );
@@ -121,6 +148,40 @@ export default Server(() => {
       console.error("Failed to create volunteer:", error);
       res.status(500).json({
         error: "Server error occurred while creating the volunteer.",
+      });
+    }
+  });
+
+  // Endpoint for retrieving a volunteer by ID
+  app.get("/volunteers/:id", (req, res) => {
+    const volunteerId = req.params.id;
+    if (typeof volunteerId !== "string") {
+      res.status(400).json({
+        error: "Invalid input: Ensure 'id' is a string.",
+      });
+      return;
+    }
+
+    // Ckeck if the volunteer exists
+    const volunteer = volunteersStorage.get(volunteerId);
+    if (volunteer === None) {
+      res.status(404).json({
+        status: 404,
+        error: "Volunteer with the provided ID does not exist.",
+      });
+      return;
+    }
+
+    try {
+      res.status(200).json({
+        message: "Volunteer retrieved successfully",
+        volunteer: volunteer,
+      });
+    }
+    catch (error) {
+      console.error("Failed to retrieve volunteer:", error);
+      res.status(500).json({
+        error: "Server error occurred while retrieving the volunteer.",
       });
     }
   });
