@@ -186,6 +186,23 @@ export default Server(() => {
     }
   });
 
+  // Endpoint for retrieving the first 10 volunteers(used for pagination)
+  app.get("/volunteers/pagination/first10", (req, res) => {
+    try {
+      const volunteers = volunteersStorage.values();
+      const first10Volunteers = volunteers.slice(0, 10);
+      res.status(200).json({
+        message: "First 10 volunteers retrieved successfully",
+        volunteers: first10Volunteers,
+      });
+    } catch (error) {
+      console.error("Failed to retrieve first 10 volunteers:", error);
+      res.status(500).json({
+        error: "Server error occurred while retrieving the first 10 volunteers.",
+      });
+    }
+  });
+
   // Endpoint for retrieving all volunteers
   app.get("/volunteers", (req, res) => {
     try {
