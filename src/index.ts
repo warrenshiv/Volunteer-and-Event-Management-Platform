@@ -1,6 +1,22 @@
 import { v4 as uuidv4 } from "uuid";
 import { Server, StableBTreeMap, Principal, None } from "azle";
+import bcrypt from 'bcrypt';
 import express from "express";
+
+// Define the Admin class to represent administrator
+class Admin {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  
+  constructor(name: string, email: string, password: string) {
+    this.id = uuidv4();
+    this.name = name;
+    this.email = email;
+    this.password = password;
+  }
+}
 
 // Define the Volunteer class to represent volunteers
 class Volunteer {
@@ -24,6 +40,7 @@ class Volunteer {
 // Define the Event class to represent events
 class Event {
   id: string;
+  adminId: string;
   title: string;
   description: string;
   dateTime: Date;
@@ -31,8 +48,9 @@ class Event {
   organizerId: string;
   createdAt: Date;
 
-  constructor(title: string, description: string, dateTime: Date, location: string, organizerId: string) {
+  constructor(adminId: string, title: string, description: string, dateTime: Date, location: string, organizerId: string) {
     this.id = uuidv4();
+    this.adminId = adminId;
     this.title = title;
     this.description = description;
     this.dateTime = dateTime;
@@ -85,11 +103,64 @@ const volunteersStorage = StableBTreeMap<string, Volunteer>(0);
 const eventsStorage = StableBTreeMap<string, Event>(1);
 const registrationsStorage = StableBTreeMap<string, Registration>(2);
 const feedbacksStorage = StableBTreeMap<string, Feedback>(3);
+const adminsStorage = StableBTreeMap<string, Admin>(4);
 
 // Define the express server
 export default Server(() => {
   const app = express();
   app.use(express.json());
+
+  // Endpoint for creating a new admin
+  app.post("/admins", (req, res) => {
+    if (
+      !req.body.name ||
+      typeof req.body.name !== "string" ||
+      !req.body.email ||
+      !req.body.password ||
+      typeof req.body.password !== "string"
+    ) {
+      res.status(400).json({
+        error:
+          "Invalid input: Ensure 'name', 'email', and 'password' are provided and are of the correct types.",
+      });
+      return;
+    }
+
+    // Validate the email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(req.body.email)) {
+      res.status(400).json({
+        error: "Invalid input: Ensure 'email' is a valid email address.",
+      });
+      return;
+    }
+
+    // Make sure the email is unique for each admin
+    const existingAdmins = adminsStorage.values();
+    const existingAdmin = existingAdmins.find(
+      (admin) => admin.email === req.body.email
+    );
+    if (existingAdmin) {
+      res.status(400).json({
+        error: "Invalid input: Admin with the same email already exists.",
+      });
+      return;
+    }
+
+    try {
+      const admin = new Admin(req.body.name, req.body.email, req.body.password);
+      adminsStorage.insert(admin.id, admin);
+      res.status(201).json({
+        message: "Admin created successfully",
+        admin: admin,
+      });
+    } catch (error) {
+      console.error("Failed to create admin:", error);
+      res.status(500).json({
+        error: "Server error occurred while creating the admin.",
+      });
+    }
+  });
 
   // Endpoint for creating a new volunteer
   app.post("/volunteers", (req, res) => {
@@ -186,27 +257,51 @@ export default Server(() => {
     }
   });
 
-  // Endpoint for retrieving the first 10 volunteers(used for pagination)
-  app.get("/volunteers/pagination/first10", (req, res) => {
+  // Endpoint for retrieving volunteers in chunks(used for pagination), allowing the users to enter the number of volunteers they want to retrieve
+  app.get("/volunteers/pagination/:start/:end", (req, res) => {
+    const start = parseInt(req.params.start);
+    const end = parseInt(req.params.end);
+    if (isNaN(start) || isNaN(end)) {
+      res.status(400).json({
+        error: "Invalid input: Ensure 'start' and 'end' are integers.",
+      });
+      return;
+    }
+
+    // Make sure the start is less than the end
+    if (start >= end) {
+      res.status(400).json({
+        error: "Invalid input: Ensure 'start' is less than 'end'.",
+      });
+      return;
+    }
+
     try {
       const volunteers = volunteersStorage.values();
-      const first10Volunteers = volunteers.slice(0, 10);
+      const chunk = volunteers.slice(start, end);
       res.status(200).json({
-        message: "First 10 volunteers retrieved successfully",
-        volunteers: first10Volunteers,
+        message: "Volunteers retrieved successfully",
+        volunteers: chunk,
       });
     } catch (error) {
-      console.error("Failed to retrieve first 10 volunteers:", error);
+      console.error("Failed to retrieve volunteers:", error);
       res.status(500).json({
-        error: "Server error occurred while retrieving the first 10 volunteers.",
+        error: "Server error occurred while retrieving volunteers.",
       });
     }
   });
 
-  // Endpoint for retrieving all volunteers
+  // Endpoint for retrieving all volunteers and display an error message if there are no volunteers
   app.get("/volunteers", (req, res) => {
     try {
       const volunteers = volunteersStorage.values();
+      if (volunteers.length === 0) {
+        res.status(404).json({
+          status: 404,
+          error: "No volunteers found.",
+        });
+        return;
+      }
       res.status(200).json({
         message: "Volunteers retrieved successfully",
         volunteers: volunteers,
@@ -222,6 +317,7 @@ export default Server(() => {
   // Endpoint for creating a new event
   app.post("/events", (req, res) => {
     if (
+      !req.body.adminId ||
       !req.body.title ||
       typeof req.body.title !== "string" ||
       !req.body.description ||
@@ -239,8 +335,18 @@ export default Server(() => {
       return;
     }
 
+    // Validate the adminId
+    const admin = adminsStorage.get(req.body.adminId);
+    if (admin === None) {
+      res.status(404).json({
+        error: "Admin with the provided ID does not exist.",
+      });
+      return;
+    }
+
     try {
       const event = new Event(
+        req.body.adminId,
         req.body.title,
         req.body.description,
         new Date(req.body.dateTime),
